@@ -1,0 +1,11 @@
+dependencies:
+  espressif/esp-dl:
+    version: ^3.1.3
+description: pedestrian detect model.
+license: MIT
+repository: git://github.com/espressif/esp-dl.git
+repository_info:
+  commit_sha: f7010efa8b1db7e5a4820db4a40313c8f26cd815
+  path: models/pedestrian_detect
+url: https://github.com/espressif/esp-dl/tree/master/models/pedestrian_detect
+version: 0.2.3~1
