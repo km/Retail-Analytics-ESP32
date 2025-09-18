@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "Retail-Analytics-ESP32",
-    "project_version":    "1",
+    "project_version":    "afe4407-dirty",
     "project_path":       "C:/Users/omar/Desktop/Retail-Analytics-ESP32",
     "idf_path":           "C:/Espressif/frameworks/esp-idf-v5.5.1",
     "build_dir":          "C:/Users/omar/Desktop/Retail-Analytics-ESP32/build",
