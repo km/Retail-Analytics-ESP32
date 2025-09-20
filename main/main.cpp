@@ -25,9 +25,15 @@
 #define samePedestrianX 10
 #define samePedestrianY 15
 
-#define wifiSSID "YOUR_WIFI_SSID"
-#define wifiPASSWORD "YOUR_WIFI_PASSWORD"
+#define wifiSSID ""
+#define wifiPASSWORD ""
+#define wifiCONNECTEDBIT BIT0
+#define wifiFAILBIT      BIT1
 
+//too track condition of wifi
+static EventGroupHandle_t s_wifi_event_group;
+
+static int s_retry_num = 0;
 static bool g_has_psram = false;
 static const char* TAG = "stream";
 
@@ -73,7 +79,7 @@ static void camera_init_or_abort() {
   config.pin_pwdn = -1;
   config.pin_reset = -1;
 
-  //stable for OV3660; you can try 20000000 if your board is stable
+  //stable for OV3660 you can try 20000000 if your board is stable
   config.xclk_freq_hz = 10000000;
 
   //low-res raw frames for fast ML and overlay
@@ -81,7 +87,7 @@ static void camera_init_or_abort() {
   config.frame_size = FRAMESIZE_QQVGA;  //160x120
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
-  //not used for RGB565 capture, relevant only for PIXFORMAT_JPEG
+  //not used for RGB565 or Grayscale capture, relevant only for PIXFORMAT_JPEG
   config.jpeg_quality = 40;
 
 
@@ -122,35 +128,90 @@ static void camera_init_or_abort() {
 }
 
 
-//setup wifi
-static void wifi_init()
+//wifi event handler
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data)
 {
-  //initialize NVS
-  esp_netif_init();
-  esp_event_loop_create_default();
-  esp_netif_create_default_wifi_sta();
+    //check if start is called
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+        //check if failed and retry up to 5 times
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (s_retry_num < 5) {
+            esp_wifi_connect();
+            s_retry_num++;
+            ESP_LOGI(TAG, "retry to connect to the AP %d/5", s_retry_num);
+        } 
+        else
+        {
+            //set FreeRTOS event group bit to notify connection failed
+            xEventGroupSetBits(s_wifi_event_group, wifiFAILBIT);
+        }
+      
+        
+    } 
+    //successfully connected and got IP
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, wifiCONNECTEDBIT);
+    }
+}
+static void wifi_init(void)
+{
+    //create event group to track wifi connection
+    s_wifi_event_group = xEventGroupCreate();
 
-  //intialize wifi with default config
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  esp_wifi_init(&cfg);
+    //initialize net 
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
 
-  wifi_config_t  wconfig = {
-    .sta = {.ssid = wifiSSID, .password = wifiPASSWORD},  
-  };
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-  esp_wifi_set_mode(WIFI_MODE_STA);
-  esp_wifi_set_config(WIFI_IF_STA, &wconfig);
-  esp_wifi_start();
+    //register the events
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
 
-  ESP_LOGI(TAG, "wifi_init_sta finished.");
-  ESP_LOGI(TAG, "connect to ap SSID:%s password:%s", wifiSSID, wifiPASSWORD);
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,ESP_EVENT_ANY_ID,&wifi_event_handler,NULL,&instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,IP_EVENT_STA_GOT_IP,&wifi_event_handler,NULL,&instance_got_ip));
 
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = wifiSSID,
+            .password = wifiPASSWORD,
+        },
+    };
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
+
+    //check if connected or failed to retry
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, wifiCONNECTEDBIT| wifiFAILBIT, pdFALSE, pdFALSE, portMAX_DELAY);
+
+    if (bits & wifiCONNECTEDBIT) 
+    {
+        ESP_LOGI(TAG, "Connected to SSID:%s", wifiSSID);
+    } 
+    else if (bits & wifiFAILBIT) 
+    {
+        ESP_LOGE(TAG, "Failed to connect to SSID:%s", wifiSSID);
+    } 
+    else 
+    {
+        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+    }
 }
 
 //setup stream handler
 esp_err_t stream_handler(httpd_req_t *req)
 {
-
+    
     camera_fb_t *fb = NULL;
     char *part_buf[64];
     //set response headers and boundary for stream
@@ -159,8 +220,12 @@ esp_err_t stream_handler(httpd_req_t *req)
     static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
     httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+    esp_err_t res = NULL;
 
-    while (true) {
+    //send chunks of jpeg frames
+    while (httpd_req_to_sockfd(req) >= 0) 
+    {
+        vTaskDelay(pdMS_TO_TICKS(100));
         fb = esp_camera_fb_get();
         if (!fb) {
             ESP_LOGE(TAG, "Camera capture failed");
@@ -180,14 +245,38 @@ esp_err_t stream_handler(httpd_req_t *req)
             continue;
         }
 
-        httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+        res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+        if (res != ESP_OK) { free(jpg_buf); break; }
         snprintf((char *)part_buf, 64, _STREAM_PART, jpg_buf_len);
-        httpd_resp_send_chunk(req, (const char *)part_buf, strlen((const char *)part_buf));
-        httpd_resp_send_chunk(req, (const char *)jpg_buf, jpg_buf_len);
+        
+        res = httpd_resp_send_chunk(req, (const char *)part_buf, strlen((const char *)part_buf));
+        if (res != ESP_OK) break;
+        if (res != ESP_OK) { free(jpg_buf); break; }
+
+        res = httpd_resp_send_chunk(req, (const char *)jpg_buf, jpg_buf_len);
         free(jpg_buf);
+        if (res != ESP_OK) { break; }
     }
 
-    return ESP_OK;
+    return res;
+}
+//start http server
+httpd_handle_t start_webserver(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    httpd_handle_t server = NULL;
+    if (httpd_start(&server, &config) == ESP_OK)
+    {
+        httpd_uri_t stream_uri = {
+            .uri       = "/stream",
+            .method    = HTTP_GET,
+            .handler   = stream_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &stream_uri);
+    }
+    return server;
 }
 
 //calculate centroid for x or y depending on input
@@ -218,5 +307,18 @@ bool samePedestrian(Pedestrian p1, Pedestrian p2)
 
 extern "C" void app_main(void)
 {
+    ESP_ERROR_CHECK(nvs_flash_init());
+
+    //connect to wifi
+    wifi_init();  
+    vTaskDelay(pdMS_TO_TICKS(2000));  
+    //start cam
+    camera_init_or_abort();    
     
+    start_webserver();  
+
+    esp_netif_ip_info_t ip_info;
+    esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info);
+    
+	  ESP_LOGI(TAG, "ESP32 IP: " IPSTR, IP2STR(&ip_info.ip));
 }
