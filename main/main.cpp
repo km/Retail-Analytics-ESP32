@@ -24,6 +24,10 @@
 //Range in which centroid assumes its the same pedestrian
 #define samePedestrianX 10
 #define samePedestrianY 15
+
+#define wifiSSID "YOUR_WIFI_SSID"
+#define wifiPASSWORD "YOUR_WIFI_PASSWORD"
+
 static bool g_has_psram = false;
 static const char* TAG = "stream";
 
@@ -118,6 +122,29 @@ static void camera_init_or_abort() {
 }
 
 
+static void wifi_init()
+{
+  //initialize NVS
+  esp_netif_init();
+  esp_event_loop_create_default();
+  esp_netif_create_default_wifi_sta();
+
+  //intialize wifi with default config
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  esp_wifi_init(&cfg);
+
+  wifi_config_t  wconfig = {
+    .sta = {.ssid = wifiSSID, .password = wifiPASSWORD},  
+  };
+
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  esp_wifi_set_config(WIFI_IF_STA, &wconfig);
+  esp_wifi_start();
+
+  ESP_LOGI(TAG, "wifi_init_sta finished.");
+  ESP_LOGI(TAG, "connect to ap SSID:%s password:%s", wifiSSID, wifiPASSWORD);
+
+}
 
 
 //calculate centroid for x or y depending on input
