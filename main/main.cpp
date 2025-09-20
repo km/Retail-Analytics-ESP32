@@ -73,6 +73,54 @@ bool samePedestrian(Pedestrian p1, Pedestrian p2)
 }
 
 
+
+
+//convert RGB888 to RGB565 format
+inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
+//precomputed circle mask to do less calcuations and avoid nested loops
+static const int8_t circle_offsets_r3[][2] = {
+  { 0, 0},
+  {-1, 0}, { 1, 0}, { 0,-1}, { 0, 1},
+  {-1,-1}, {-1, 1}, { 1,-1}, { 1, 1},
+  {-2, 0}, { 2, 0}, { 0,-2}, { 0, 2},
+  {-2,-1}, { 2,-1}, {-2, 1}, { 2, 1},
+  {-1,-2}, { 1,-2}, {-1, 2}, { 1, 2},
+  {-3, 0}, { 3, 0}, { 0,-3}, { 0, 3}
+};
+//draw centroid radius 3 according to the mask
+void draw_point_rgb565(uint8_t *buf, int width, int height, int x, int y, uint8_t r, uint8_t g, uint8_t b) 
+{
+  //map 2d into 1d
+    uint16_t *pix = (uint16_t*)buf;
+    uint16_t color = rgb565(r, g, b);
+
+    for (size_t i = 0; i < sizeof(circle_offsets_r3)/sizeof(circle_offsets_r3[0]); i++) {
+        int nx = x + circle_offsets_r3[i][0];
+        int ny = y + circle_offsets_r3[i][1];
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          //formula to access 2d array in 1d y*width + x
+            pix[ny * width + nx] = color;
+        }
+    }
+}
+
+//draw entrance line
+void draw_line_rgb565(uint8_t *buf, int width, uint8_t r, uint8_t g, uint8_t b) 
+{
+    //map 2d into 1d
+    uint16_t *pix = (uint16_t*)buf;
+    uint16_t color = rgb565(r, g, b);
+
+    
+    for (int x = 0; x < width; x++) 
+    {
+       pix[LineY* width + x] = color;
+    }
+    
+}
 //run model
 auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_height) -> std::vector<Pedestrian>
 {
@@ -93,21 +141,24 @@ auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_heigh
         {
             ESP_LOGI(TAG, "Pedestrian detected with confidence: %.2f, box coords: x1:%d, y1:%d, x2:%d, y2:%d", 
                  r.score, r.box[0], r.box[1], r.box[2], r.box[3]);
+
+            //add to pedestrians list
+            Pedestrian p;
+            p.x1 = r.box[0];
+            p.y1 = r.box[1];
+            p.x2 = r.box[2];
+            p.y2 = r.box[3];
+            calculateCentroid(&p);
+            pedestrians.push_back(p);
+            
+
+            
         }
-        
-
-
         
     }
 
     return pedestrians;
 }
-//draw entrance line
-
-//draw pedestrian boxes
-
-//draw centroid
-
 
 
 
@@ -143,7 +194,7 @@ static void camera_init_or_abort() {
   config.pin_reset = -1;
 
   //stable for OV3660 you can try 20000000 if your board is stable
-  config.xclk_freq_hz = 10000000;
+  config.xclk_freq_hz = 20000000;
 
   //low-res raw frames for fast ML and overlay
   config.pixel_format = PIXFORMAT_RGB565; //fastest
@@ -290,17 +341,46 @@ esp_err_t stream_handler(httpd_req_t *req)
     {
         vTaskDelay(pdMS_TO_TICKS(100));
         fb = esp_camera_fb_get();
+
         if (!fb) {
             ESP_LOGE(TAG, "Camera capture failed");
             return ESP_FAIL;
         }
-        run_pedestrian_detect(fb->buf, fb->width, fb->height);
-        //convert grayscale to jpeg for streaming
+        
+        int width = fb->width;
+        int height = fb->height;
+
+        //make a copy of the raw frame buffer 
+        std::vector<uint8_t> rgb_copy(fb->len);
+        memcpy(rgb_copy.data(), fb->buf, fb->len);
+        draw_line_rgb565(rgb_copy.data(), width, 0,255, 0);
+
+        //free frame buffer to be reused
+        esp_camera_fb_return(fb);
+        fb = NULL;
+
+        auto results = run_pedestrian_detect(rgb_copy.data(), width, height);
+
+        for (auto &det : results) {
+                draw_point_rgb565(rgb_copy.data(), width, height, det.centroidX, det.centroidY, 255, 0, 0);
+            
+        }
+
+        //convert rgb565 to jpeg for streaming
         size_t jpg_buf_len = 0;
         uint8_t *jpg_buf = NULL;
-        bool jpeg_converted = frame2jpg(fb, 80, &jpg_buf, &jpg_buf_len);
+        bool jpeg_converted = fmt2jpg(
+            rgb_copy.data(),      // raw RGB565 data
+            rgb_copy.size(),      // input buffer length
+            width,            // image width
+            height,           // image height
+            PIXFORMAT_RGB565,     // pixel format of input
+            40,                   // JPEG quality (0-63, lower = faster/smaller)
+            &jpg_buf,             // output buffer pointer
+            &jpg_buf_len          // output buffer length
+        );
 
-        esp_camera_fb_return(fb);
+        //esp_camera_fb_return(fb);
         fb = NULL;
 
         if (!jpeg_converted) {
