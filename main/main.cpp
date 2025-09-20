@@ -122,6 +122,7 @@ static void camera_init_or_abort() {
 }
 
 
+//setup wifi
 static void wifi_init()
 {
   //initialize NVS
@@ -146,6 +147,48 @@ static void wifi_init()
 
 }
 
+//setup stream handler
+esp_err_t stream_handler(httpd_req_t *req)
+{
+
+    camera_fb_t *fb = NULL;
+    char *part_buf[64];
+    //set response headers and boundary for stream
+    static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=123456789000000000000987654321";
+    static const char* _STREAM_BOUNDARY = "\r\n--123456789000000000000987654321\r\n";
+    static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+    httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+
+    while (true) {
+        fb = esp_camera_fb_get();
+        if (!fb) {
+            ESP_LOGE(TAG, "Camera capture failed");
+            return ESP_FAIL;
+        }
+
+        //convert grayscale to jpeg for streaming
+        size_t jpg_buf_len = 0;
+        uint8_t *jpg_buf = NULL;
+        bool jpeg_converted = frame2jpg(fb, 80, &jpg_buf, &jpg_buf_len);
+
+        esp_camera_fb_return(fb);
+        fb = NULL;
+
+        if (!jpeg_converted) {
+            ESP_LOGE(TAG, "JPEG compression failed");
+            continue;
+        }
+
+        httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+        snprintf((char *)part_buf, 64, _STREAM_PART, jpg_buf_len);
+        httpd_resp_send_chunk(req, (const char *)part_buf, strlen((const char *)part_buf));
+        httpd_resp_send_chunk(req, (const char *)jpg_buf, jpg_buf_len);
+        free(jpg_buf);
+    }
+
+    return ESP_OK;
+}
 
 //calculate centroid for x or y depending on input
 void calculateCentroid(Pedestrian* p1)
