@@ -24,6 +24,7 @@
 //Range in which centroid assumes its the same pedestrian
 #define samePedestrianX 10
 #define samePedestrianY 15
+#define pedestrianThreshold 0.75
 
 #define wifiSSID ""
 #define wifiPASSWORD ""
@@ -36,7 +37,8 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 static bool g_has_psram = false;
 static const char* TAG = "stream";
-
+//pedestrian detector
+static PedestrianDetect* pmodel = nullptr;
 
 typedef struct {
     int x1;
@@ -47,6 +49,67 @@ typedef struct {
     int centroidX;
     int centroidY;
 } Pedestrian;
+
+//calculate centroid for x or y depending on input
+void calculateCentroid(Pedestrian* p1)
+{
+    int cx = (p1->x1 + p1->x2)/2;
+    int cy = (p1->y1 + p1->y2)/2;
+    p1->centroidX = cx;
+    p1->centroidY = cy;
+}
+
+
+//check if pedestrian is same as last frame
+//This is achieved by seeing if the centroids are closer enough especially on the X axis
+bool samePedestrian(Pedestrian p1, Pedestrian p2)
+{  
+    int diffX = p1.centroidX - p2.centroidX;
+    int diffY = p1.centroidY - p2.centroidY;
+
+
+    //check if between ranges
+    return (abs(diffX) <= samePedestrianX) && (abs(diffY) <= samePedestrianY);
+}
+
+
+//run model
+auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_height) -> std::vector<Pedestrian>
+{
+    std::vector<Pedestrian> pedestrians;
+    //prep image
+    dl::image::img_t img{image_data, (uint16_t)image_width, (uint16_t)image_height, dl::image::DL_IMAGE_PIX_TYPE_RGB565};
+
+    //run model
+    auto& results = pmodel->run(img);
+    //parse results
+    for (const auto& r : results) 
+    {
+        if (r.score < pedestrianThreshold)
+        {
+          continue; //skip if not confident enough
+        } 
+        else
+        {
+            ESP_LOGI(TAG, "Pedestrian detected with confidence: %.2f, box coords: x1:%d, y1:%d, x2:%d, y2:%d", 
+                 r.score, r.box[0], r.box[1], r.box[2], r.box[3]);
+        }
+        
+
+
+        
+    }
+
+    return pedestrians;
+}
+//draw entrance line
+
+//draw pedestrian boxes
+
+//draw centroid
+
+
+
 
 
 //setup for OV3660 camera
@@ -83,7 +146,7 @@ static void camera_init_or_abort() {
   config.xclk_freq_hz = 10000000;
 
   //low-res raw frames for fast ML and overlay
-  config.pixel_format = PIXFORMAT_GRAYSCALE; //fastest
+  config.pixel_format = PIXFORMAT_RGB565; //fastest
   config.frame_size = FRAMESIZE_QQVGA;  //160x120
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
@@ -231,7 +294,7 @@ esp_err_t stream_handler(httpd_req_t *req)
             ESP_LOGE(TAG, "Camera capture failed");
             return ESP_FAIL;
         }
-
+        run_pedestrian_detect(fb->buf, fb->width, fb->height);
         //convert grayscale to jpeg for streaming
         size_t jpg_buf_len = 0;
         uint8_t *jpg_buf = NULL;
@@ -279,29 +342,7 @@ httpd_handle_t start_webserver(void)
     return server;
 }
 
-//calculate centroid for x or y depending on input
-void calculateCentroid(Pedestrian* p1)
-{
-    int cx = (p1->x1 + p1->x2)/2;
-    int cy = (p1->y1 + p1->y2)/2;
-    p1->centroidX = cx;
-    p1->centroidY = cy;
-}
 
-
-//check if pedestrian is same as last frame
-//This is achieved by seeing if the centroids are closer enough especially on the X axis
-bool samePedestrian(Pedestrian p1, Pedestrian p2)
-{  
-    int diffX = p1.centroidX - p2.centroidX;
-    int diffY = p1.centroidY - p2.centroidY;
-
-
-    //check if between ranges
-    return (abs(diffX) <= samePedestrianX) && (abs(diffY) <= samePedestrianY);
-}
-
- 
 
 
 
@@ -314,7 +355,7 @@ extern "C" void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(2000));  
     //start cam
     camera_init_or_abort();    
-    
+    pmodel = new PedestrianDetect();
     start_webserver();  
 
     esp_netif_ip_info_t ip_info;
