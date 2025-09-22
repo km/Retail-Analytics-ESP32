@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <string.h>
-
+#include <vector>
 #include "esp_camera.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -18,8 +18,10 @@
 #include "dl_image_jpeg.hpp"
 #include "pedestrian_detect.hpp"
 #include <stdlib.h>
+#include <queue>
+
 //marker line to figure out if user entered or exited
-#define LineY 80
+#define LineY 70
 
 //Range in which centroid assumes its the same pedestrian
 #define samePedestrianX 10
@@ -37,18 +39,31 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 static bool g_has_psram = false;
 static const char* TAG = "stream";
+
+//queues
+std::queue<int> cameraCaptureQueue;
+std::queue<int> pedestrianDetectQueue;
+
+
 //pedestrian detector
 static PedestrianDetect* pmodel = nullptr;
-
-typedef struct {
+struct Pedestrian {
     int x1;
     int x2;
     int y1;
     int y2;
-
     int centroidX;
     int centroidY;
-} Pedestrian;
+
+    Pedestrian() = default;
+
+    Pedestrian& operator=(const Pedestrian& other) = default;
+
+
+};
+
+
+std::vector<Pedestrian> currentPedestrians;
 
 //calculate centroid for x or y depending on input
 void calculateCentroid(Pedestrian* p1)
@@ -62,7 +77,7 @@ void calculateCentroid(Pedestrian* p1)
 
 //check if pedestrian is same as last frame
 //This is achieved by seeing if the centroids are closer enough especially on the X axis
-bool samePedestrian(Pedestrian p1, Pedestrian p2)
+bool samePedestrian(const Pedestrian& p1, const Pedestrian& p2)
 {  
     int diffX = p1.centroidX - p2.centroidX;
     int diffY = p1.centroidY - p2.centroidY;
@@ -121,6 +136,76 @@ void draw_line_rgb565(uint8_t *buf, int width, uint8_t r, uint8_t g, uint8_t b)
     }
     
 }
+
+//add new pedestrians into current list (only apply this with a list that has been filtered for same pedestrians)
+void updatePedestrians(const std::vector<Pedestrian>& newPedestrians)
+{
+       currentPedestrians.insert(currentPedestrians.end(), newPedestrians.begin(), newPedestrians.end());
+}
+
+//remove non existent pedestrians & check for crossing the line
+void prunePedestrians(const std::vector<Pedestrian>& newPedestrians)
+{
+    std::vector<Pedestrian> updatedPedestrians;
+
+    for (auto &oldPed : currentPedestrians) 
+    {
+        bool found = false;
+        for (auto &newPed : newPedestrians) 
+        {
+            if (samePedestrian(oldPed, newPed)) 
+            {
+                found = true;
+                updatedPedestrians.push_back(newPed);
+                //print found new ped
+                ESP_LOGI(TAG, "Pedestrian still in frame at (%d, %d)", newPed.centroidX, newPed.centroidY);
+                //check if crossed the line
+                if ((oldPed.centroidY > LineY) && (newPed.centroidY <= LineY)) 
+                {
+                    ESP_LOGI(TAG, "Pedestrian exited at (%d, %d)", newPed.centroidX, newPed.centroidY);
+                } 
+                else if ((oldPed.centroidY < LineY) && (newPed.centroidY >= LineY)) 
+                {
+                    ESP_LOGI(TAG, "Pedestrian entered at (%d, %d)", newPed.centroidX, newPed.centroidY);
+                }
+                break;
+            }
+        }
+        //if not found it means pedestrian has left the frame
+        if (!found) 
+        {
+            ESP_LOGI(TAG, "Pedestrian left the frame at (%d, %d)", oldPed.centroidX, oldPed.centroidY);
+        }
+    }
+
+    currentPedestrians = updatedPedestrians;
+}
+//get new filtered pedestrians in the new list that arent already in the current list
+std::vector<Pedestrian> filterNewPedestrians(const std::vector<Pedestrian>& newPedestrians)
+{
+    std::vector<Pedestrian> filteredPedestrians;
+
+    for (const auto& newPed : newPedestrians) 
+    {
+        bool isNew = true;
+        for (const auto& currPed : currentPedestrians) 
+        {
+            if (samePedestrian(newPed, currPed)) 
+            {
+                isNew = false;
+                break;
+            }
+        }
+        if (isNew) 
+        {
+            filteredPedestrians.push_back(newPed);
+        }
+    }
+
+    return filteredPedestrians;
+}
+
+
 //run model
 auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_height) -> std::vector<Pedestrian>
 {
@@ -139,8 +224,8 @@ auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_heigh
         } 
         else
         {
-            ESP_LOGI(TAG, "Pedestrian detected with confidence: %.2f, box coords: x1:%d, y1:%d, x2:%d, y2:%d", 
-                 r.score, r.box[0], r.box[1], r.box[2], r.box[3]);
+            //ESP_LOGI(TAG, "Pedestrian detected with confidence: %.2f, box coords: x1:%d, y1:%d, x2:%d, y2:%d", 
+              //   r.score, r.box[0], r.box[1], r.box[2], r.box[3]);
 
             //add to pedestrians list
             Pedestrian p;
@@ -159,7 +244,6 @@ auto run_pedestrian_detect(uint8_t* image_data, int image_width, int image_heigh
 
     return pedestrians;
 }
-
 
 
 
@@ -335,7 +419,7 @@ esp_err_t stream_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
     esp_err_t res = NULL;
-
+    esp_wifi_set_ps(WIFI_PS_NONE);
     //send chunks of jpeg frames
     while (httpd_req_to_sockfd(req) >= 0) 
     {
@@ -360,11 +444,19 @@ esp_err_t stream_handler(httpd_req_t *req)
         fb = NULL;
 
         auto results = run_pedestrian_detect(rgb_copy.data(), width, height);
-
+        
+        //draw centroids across each pedestrian detected
         for (auto &det : results) {
                 draw_point_rgb565(rgb_copy.data(), width, height, det.centroidX, det.centroidY, 255, 0, 0);
             
         }
+
+        //get filtered new pedestrians
+        auto newPedestrians = filterNewPedestrians(results);
+        //clean up current pedestrians list and check for crossing the line
+        prunePedestrians(results);
+        //add new pedestrians to current list
+        updatePedestrians(newPedestrians);
 
         //convert rgb565 to jpeg for streaming
         size_t jpg_buf_len = 0;
@@ -408,6 +500,10 @@ httpd_handle_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 
+    config.lru_purge_enable = true;
+    config.recv_wait_timeout = 30; 
+    config.send_wait_timeout = 30; 
+    config.stack_size = 8192;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK)
     {
@@ -423,7 +519,15 @@ httpd_handle_t start_webserver(void)
 }
 
 
-
+//task report to api
+void report_task(void* pvParameters)
+{
+    while (1) 
+    {
+        //report every 10 seconds
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
 
 
 extern "C" void app_main(void)
