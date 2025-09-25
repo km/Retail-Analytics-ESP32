@@ -42,6 +42,10 @@ This system detects **entries/exits across a store threshold line**, reports eve
 
 ----------
 
+### Dashboard Preview
+<img width="1717" height="916" alt="image" src="https://github.com/user-attachments/assets/d52acef7-4457-4e4c-9ca4-1acef07dd812" />
+
+
 ##  Installation
 
 ### 1. ESP32-S3 Setup
@@ -139,8 +143,6 @@ Serves the Retail Dashboard frontend.
 
 ----------
 
-### Dashboard Preview
-<img width="1717" height="916" alt="image" src="https://github.com/user-attachments/assets/d52acef7-4457-4e4c-9ca4-1acef07dd812" />
 
 
 
