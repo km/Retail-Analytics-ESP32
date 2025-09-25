@@ -19,6 +19,9 @@
     #include "pedestrian_detect.hpp"
     #include <stdlib.h>
     #include <queue>
+    #include <time.h>
+    #include "esp_http_client.h"
+    #include "esp_sntp.h"
     
     //marker line to figure out if user entered or exited
     #define LineY 60
@@ -43,6 +46,7 @@
     //queues
     QueueHandle_t camera_queue;  //Camera to ML
     QueueHandle_t stream_queue;  //ML to Stream
+    QueueHandle_t movement_queue; //entries/exits to report
 
 
     //pedestrian detector
@@ -66,6 +70,103 @@
         uint8_t *buf;
         size_t len;
     } jpeg_frame;
+
+    //movement event (entry = 1, exit = 0)
+    struct MovementEvent {
+        int64_t timestamp; //unix time
+        int is_entry;      //1 = entry, 0 = exit
+    };
+
+    //api config (replace placeholders)
+    #define DASHBOARD_HOST "SET"   //set to API server IP
+    #define DASHBOARD_PORT 8000
+    #define DASHBOARD_API_KEY "SET" //set to real api key
+    #define REPORT_BATCH_MAX 20
+    #define REPORT_PERIOD_MS 10000
+
+    //get unix time (0 if not set yet)
+    static inline int64_t get_unix_time()
+    {
+        return (int64_t)time(NULL);
+    }
+
+    //push movement to queue
+    void record_movement(int is_entry)
+    {
+        MovementEvent evt;
+        evt.timestamp = get_unix_time();
+        evt.is_entry = is_entry ? 1 : 0;
+        if (movement_queue) 
+        {
+            xQueueSend(movement_queue, &evt, 0);
+            printf("Recorded movement event: %s at %lld\n", is_entry ? "entry" : "exit", (long long)evt.timestamp);
+        }
+    }
+
+    //init time sync
+    void init_sntp(void)
+    {
+        if (esp_sntp_enabled()) return;
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_setservername(0, (char*)"pool.ntp.org");
+        sntp_init();
+        //wait a bit for time to be set
+        for (int i = 0; i < 10; i++) {
+            time_t now = 0; struct tm tm_info = {0};
+            time(&now);
+            localtime_r(&now, &tm_info);
+            if (now > 1700000000) { //rough sanity check (after 2023)
+                ESP_LOGI(TAG, "Time sync ok: %lld", (long long)now);
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+
+    //send batch to API
+    static void send_movements(MovementEvent* list, size_t count)
+    {
+        if (count == 0) return;
+        char url[128];
+        snprintf(url, sizeof(url), "http://%s:%d/movements/?api_key=%s", DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_API_KEY);
+
+        //estimate json size
+        size_t buf_len = 32 + count * 40;
+        char *json = (char*)malloc(buf_len);
+        if (!json) return;
+        char *p = json;
+        //create json list
+        *p++ = '[';
+        for (size_t i = 0; i < count; i++) {
+            int written = snprintf(p, buf_len - (p - json), "{\"time\":%lld,\"form\":%s}%s",(long long)list[i].timestamp, list[i].is_entry ? "true" : "false", (i + 1 < count) ? "," : "");
+            if (written < 0 || (size_t)written >= buf_len - (p - json))
+            { 
+                break; 
+            }
+
+            p += written;
+        }
+        *p++ = ']';
+        *p = '\0';
+
+        //send json list to api
+        esp_http_client_config_t cfg = {};
+        cfg.url = url;
+        cfg.method = HTTP_METHOD_POST;
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        if (client) {
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, json, strlen(json));
+            esp_err_t err = esp_http_client_perform(client);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "Reported %d movements status=%d", (int)count, esp_http_client_get_status_code(client));
+            } else {
+                ESP_LOGW(TAG, "Report failed: %s", esp_err_to_name(err));
+            }
+            esp_http_client_cleanup(client);
+        }
+        free(json);
+    }
 
 
     std::vector<Pedestrian> currentPedestrians;
@@ -168,10 +269,12 @@
                     if ((oldPed.centroidY > LineY) && (newPed.centroidY <= LineY)) 
                     {
                         ESP_LOGI(TAG, "Pedestrian exited at (%d, %d)", newPed.centroidX, newPed.centroidY);
+                        record_movement(0); //exit
                     } 
                     else if ((oldPed.centroidY < LineY) && (newPed.centroidY >= LineY)) 
                     {
                         ESP_LOGI(TAG, "Pedestrian entered at (%d, %d)", newPed.centroidX, newPed.centroidY);
+                        record_movement(1); //entry
                     }
                     break;
                 }
@@ -550,10 +653,24 @@
     //task report to api
     void report_task(void* pvParameters)
     {
+        MovementEvent batch[REPORT_BATCH_MAX];
+        TickType_t last = xTaskGetTickCount();
         while (1) 
         {
-            //report every 10 seconds
-            vTaskDelay(pdMS_TO_TICKS(10000));
+            size_t count = 0;
+            while (count < REPORT_BATCH_MAX && xQueueReceive(movement_queue, &batch[count], 0) == pdTRUE) {
+                count++;
+                printf("Queued movement event %d\n", count);
+            }
+            //send if we have any
+            if (count > 0) {
+                printf("Reporting %d movement events\n", count);
+                send_movements(batch, count);
+            }
+            else {
+                ESP_LOGI(TAG, "No movement events this cycle");
+            }
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(REPORT_PERIOD_MS));
         }
     }
     //task refactor
@@ -612,7 +729,6 @@
                     //draw centroids across each pedestrian detected
                     for (auto &det : results) {
                             draw_point_rgb565(fb->buf, width, height, det.centroidX, det.centroidY, 255, 0, 0);
-       
 
                     }
 
@@ -767,16 +883,19 @@
         //connect to wifi
         wifi_init();  
         vTaskDelay(pdMS_TO_TICKS(2000));  
+        //sync time for unix timestamps
+        init_sntp();
         //start cam
         camera_init_or_abort();    
         pmodel = new PedestrianDetect();
         //create tasks
         camera_queue = xQueueCreate(5, sizeof(camera_fb_t*));
         stream_queue = xQueueCreate(1, sizeof(jpeg_frame));
+        movement_queue = xQueueCreate(32, sizeof(MovementEvent));
 
         xTaskCreatePinnedToCore(&camera_task, "camera_task", 4096, NULL, 7, NULL, 0);
-
 	    xTaskCreatePinnedToCore(&ml_task, "ml_task", 16384, NULL, 6, NULL, 1);
+        xTaskCreatePinnedToCore(&report_task, "report_task", 4096, NULL, 6, NULL, 0);
 
         start_webserver_pipeline();  
 

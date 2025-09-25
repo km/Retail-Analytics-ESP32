@@ -4,6 +4,7 @@ idf_component_register(
   REQUIRES
     esp32-camera
     esp_http_server
+  esp_http_client
     esp_wifi
     nvs_flash
     esp_event

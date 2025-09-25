@@ -2,17 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Retail Dashboard (Occupancy-based)</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Retail Dashboard</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
       :root {
         --bg: #0f172a;
         --panel: #111827;
-        --muted: #9ca3af;
+        --muted: #6b7280;
         --text: #e5e7eb;
         --primary: #60a5fa;
-        --cyan: #22d3ee;
+        --primary-200: #bfdbfe;
         --green: #34d399;
         --red: #f87171;
         --yellow: #fbbf24;
@@ -33,22 +36,23 @@
         color: var(--text);
       }
       header {
-        padding: 20px;
+        padding: 24px;
         border-bottom: 1px solid var(--border);
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        justify-content: space-between;
+        gap: 16px;
       }
       .brand {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
       }
       .dot {
         width: 12px;
         height: 12px;
         border-radius: 50%;
-        background: linear-gradient(135deg, var(--primary), var(--cyan));
+        background: linear-gradient(135deg, var(--primary), #22d3ee);
         box-shadow: 0 0 12px rgba(34, 211, 238, 0.6);
       }
       h1 {
@@ -72,7 +76,7 @@
         gap: 12px;
         align-items: end;
       }
-      .field {
+      .controls .field {
         display: flex;
         flex-direction: column;
         gap: 6px;
@@ -103,7 +107,7 @@
         transition: 0.15s ease;
       }
       .btn.primary {
-        background: linear-gradient(135deg, var(--primary), var(--cyan));
+        background: linear-gradient(135deg, var(--primary), #22d3ee);
         color: #0b1020;
         border: none;
       }
@@ -112,28 +116,14 @@
         filter: brightness(1.05);
       }
       .toolbar {
-        margin-top: 8px;
+        margin-top: 10px;
         display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
+        gap: 10px;
       }
-      .error {
-        margin-top: 12px;
-        padding: 10px;
-        border-radius: 10px;
-        background: rgba(239, 68, 68, 0.1);
-        border: 1px solid rgba(239, 68, 68, 0.3);
-        color: #fecaca;
-        display: none;
-      }
-      .warn {
-        margin-top: 12px;
-        padding: 10px;
-        border-radius: 10px;
-        background: rgba(251, 191, 36, 0.1);
-        border: 1px solid rgba(251, 191, 36, 0.3);
-        color: #fde68a;
-        display: none;
+      .status {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--muted);
       }
       .grid {
         margin-top: 20px;
@@ -151,10 +141,6 @@
       .panel h2 {
         margin: 0 0 10px 0;
         font-size: 16px;
-      }
-      canvas {
-        width: 100% !important;
-        height: 360px !important;
       }
       .stats {
         display: grid;
@@ -174,6 +160,28 @@
       .stat .value {
         margin-top: 6px;
         font-size: 18px;
+      }
+      .bad {
+        color: var(--red);
+      }
+      .good {
+        color: var(--green);
+      }
+      .warn {
+        color: var(--yellow);
+      }
+      canvas {
+        width: 100% !important;
+        height: 360px !important;
+      }
+      .error {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #fecaca;
+        display: none;
       }
       .muted {
         color: var(--muted);
@@ -202,7 +210,7 @@
         <div class="dot"></div>
         <h1>Retail Analytics Dashboard</h1>
       </div>
-      <div class="muted" id="tzInfo"></div>
+      <div class="status" id="tzInfo"></div>
     </header>
 
     <div class="container">
@@ -230,19 +238,23 @@
           <input
             type="number"
             id="countInput"
-            min="100"
-            max="200000"
-            step="100"
-            value="10000"
+            min="50"
+            max="20000"
+            step="50"
+            value="5000"
           />
-
+          <div class="muted">
+            Larger counts improve pairing accuracy (entry→exit).
+          </div>
         </div>
 
         <div class="field">
-          <label>Smoothing K (shrink toward daily mean)</label>
+          <label>Smoothing (K, Bayesian prior strength)</label>
           <input type="range" id="smoothK" min="0" max="20" step="1" value="5" />
           <div class="toolbar">
-            <span class="muted">K=<span id="smoothKVal">5</span></span>
+            <span class="muted"
+              >K=<span id="smoothKVal">5</span> (higher = more smoothing)</span
+            >
           </div>
         </div>
 
@@ -251,13 +263,12 @@
           <button class="btn primary" id="refreshBtn">Refresh</button>
           <div class="toolbar">
             <button class="btn" id="todayBtn">Today</button>
-            <button class="btn" id="nowBtn">Use Now(instead of end-of-day)</button>
+            <button class="btn" id="nowBtn">Use Now</button>
           </div>
         </div>
       </div>
 
       <div id="errorBox" class="error"></div>
-      <div id="warnBox" class="warn"></div>
 
       <div class="grid">
         <div class="panel">
@@ -267,11 +278,12 @@
         </div>
 
         <div class="panel">
-          <h2>Estimated Avg Dwell by Hour of Day (minutes)</h2>
+          <h2>Average Time Spent by Hour of Entry (minutes)</h2>
           <canvas id="dwellChart"></canvas>
           <div class="muted">
-            Dwell = (average occupancy * 60) / entries. Smoothed toward daily
-            mean when samples per hour are low.
+            Average session duration computed from entry→exit pairs. Bayesian
+            shrinkage blends each hour with the day's overall mean when samples
+            are few.
           </div>
         </div>
       </div>
@@ -288,11 +300,11 @@
             <div class="value" id="statInOut">—</div>
           </div>
           <div class="stat">
-            <div class="label">Avg Occupancy (in day)</div>
-            <div class="value" id="statOcc">—</div>
+            <div class="label">Sessions (in day)</div>
+            <div class="value" id="statSessions">—</div>
           </div>
           <div class="stat">
-            <div class="label">Daily Avg Dwell (minutes, estimated)</div>
+            <div class="label">Avg / Median Dwell (minutes)</div>
             <div class="value" id="statDwell">—</div>
           </div>
         </div>
@@ -300,75 +312,46 @@
     </div>
 
     <script>
-      //utils
       const $ = (id) => document.getElementById(id);
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmt = new Intl.NumberFormat();
 
-      function toLocalHour(ts) {
-        return new Date(ts * 1000).getHours();
+      function endOfDayEpoch(dateStr) {
+        //YYYY-MM-DD in local time
+        const [y, m, d] = dateStr.split("-").map((x) => parseInt(x, 10));
+        const dt = new Date(y, m - 1, d, 23, 59, 59, 999); //local
+        return Math.floor(dt.getTime() / 1000);
       }
 
       function startOfDayEpoch(dateStr) {
         const [y, m, d] = dateStr.split("-").map((x) => parseInt(x, 10));
-        return Math.floor(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000);
+        const dt = new Date(y, m - 1, d, 0, 0, 0, 0); //local
+        return Math.floor(dt.getTime() / 1000);
       }
 
-      function endOfDayEpoch(dateStr) {
-        const [y, m, d] = dateStr.split("-").map((x) => parseInt(x, 10));
-        return Math.floor(new Date(y, m - 1, d, 23, 59, 59, 999).getTime() / 1000);
-      }
-
-      function nextHourBoundary(ts) {
-        const d = new Date(ts * 1000);
-        const next = new Date(
-          d.getFullYear(),
-          d.getMonth(),
-          d.getDate(),
-          d.getHours() + 1,
-          0,
-          0,
-          0
-        );
-        return Math.floor(next.getTime() / 1000);
+      function toLocalHour(ts) {
+        return new Date(ts * 1000).getHours(); 
       }
 
       function formatMinutes(mins) {
-        if (!isFinite(mins) || mins <= 0) return "—";
-        if (mins < 1) return `${Math.round(mins * 60)} sec`;
+        if (!isFinite(mins)) return "—";
+        if (mins < 1) return `${(mins * 60).toFixed(0)} sec`;
         if (mins < 60) return `${mins.toFixed(1)} min`;
         const h = Math.floor(mins / 60);
         const m = Math.round(mins % 60);
         return `${h}h ${pad2(m)}m`;
       }
 
-      function setError(msg) {
-        const box = $("errorBox");
-        if (!msg) {
-          box.style.display = "none";
-          box.textContent = "";
-          return;
-        }
-        box.style.display = "block";
-        box.textContent = msg;
+      function percentile(arr, p) {
+        if (!arr.length) return 0;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const idx = Math.min(
+          sorted.length - 1,
+          Math.max(0, Math.floor((p / 100) * sorted.length))
+        );
+        return sorted[idx];
       }
 
-      function setWarn(msg) {
-        const box = $("warnBox");
-        if (!msg) {
-          box.style.display = "none";
-          box.textContent = "";
-          return;
-        }
-        box.style.display = "block";
-        box.textContent = msg;
-      }
-
-      function updateSmoothLabel() {
-        $("smoothKVal").textContent = $("smoothK").value;
-      }
-
-      //api fetch
       async function fetchMovements({ apiKey, dateEpoch, count }) {
         const url = `/getMovements/?date=${encodeURIComponent(
           dateEpoch
@@ -394,19 +377,19 @@
         if (!data || !Array.isArray(data.movements)) {
           throw new Error("Malformed response: missing movements[]");
         }
+        // normalize to {timestamp, is_entry:boolean}
         return data.movements.map((m) => ({
           timestamp: Number(m.timestamp),
           is_entry: !!m.is_entry,
         }));
       }
 
-      
-      function computeEntriesExitsByHour(eventsAsc, dayStart, dayEnd) {
+      function groupEventsByHour(events, dayStart, dayEnd) {
         const entries = Array(24).fill(0);
         const exits = Array(24).fill(0);
         let inCount = 0,
           outCount = 0;
-        for (const e of eventsAsc) {
+        for (const e of events) {
           if (e.timestamp >= dayStart && e.timestamp <= dayEnd) {
             const h = toLocalHour(e.timestamp);
             if (e.is_entry) {
@@ -421,104 +404,85 @@
         return { entries, exits, inCount, outCount };
       }
 
-      function computeOccAtStartOfDay(eventsAsc, dayStart) {
-        //sum entries exits for events strictly before dayStart
-        let occ = 0;
-        let earliestTs = Number.POSITIVE_INFINITY;
-        for (const e of eventsAsc) {
-          if (e.timestamp < earliestTs) earliestTs = e.timestamp;
-          if (e.timestamp < dayStart) {
-            occ += e.is_entry ? 1 : -1;
-          } else {
-            break; //because eventsAsc is sorted
-          }
-        }
-        const baselineKnown = earliestTs < dayStart;
-        return { occ0: occ, baselineKnown };
-      }
-
-      function integrateOccupancyByHour(eventsAsc, dayStart, dayEnd, occ0) {
-        //stepwise constant occupancy integration, split across hour buckets.
-        const hourAreaSec = Array(24).fill(0); // person-seconds per hour
-        let occ = occ0;
-        let t = dayStart;
-
-        //helper: add [t, t2) area with current occ, distributed by hour
-        function addSegment(t1, t2, occVal) {
-          if (t2 <= t1) return;
-          let cur = t1;
-          while (cur < t2) {
-            const h = toLocalHour(cur);
-            const boundary = Math.min(nextHourBoundary(cur), t2);
-            const dt = Math.max(0, boundary - cur);
-            const occClamped = Math.max(0, occVal); //avoid negative occupancy
-            hourAreaSec[h] += occClamped * dt;
-            cur = boundary;
-          }
-        }
+      function buildSessions(eventsAsc) {
+        //pair entries with the next exit. Ignore inconsistent extra exits.
+        const sessions = [];
+        let inside = false;
+        let entryTs = null;
 
         for (const e of eventsAsc) {
-          if (e.timestamp < dayStart) continue;
-          if (e.timestamp > dayEnd) break;
-
-          addSegment(t, e.timestamp, occ);
-          //apply step at event time
-          occ += e.is_entry ? 1 : -1;
-          t = e.timestamp;
-        }
-        //tail to end-of-day
-        addSegment(t, dayEnd, occ);
-
-        const totalAreaSec = hourAreaSec.reduce((a, b) => a + b, 0);
-        const avgOcc = totalAreaSec / (dayEnd - dayStart || 1);
-
-        return { hourAreaSec, totalAreaSec, avgOcc };
-      }
-
-      function computeDwellFromOccupancy(hourAreaSec, entriesByHour) {
-        //dwell_h (minutes) ≈ (avg occupancy in hour × 60) / entries in hour
-        const dwellRaw = Array(24).fill(0);
-        for (let h = 0; h < 24; h++) {
-          const avgOccH = hourAreaSec[h] / 3600; // person-seconds -> persons
-          const ent = entriesByHour[h];
-          if (ent > 0 && avgOccH > 0) {
-            dwellRaw[h] = (avgOccH * 60) / ent;
+          if (e.is_entry) {
+            if (!inside) {
+              inside = true;
+              entryTs = e.timestamp;
+            } else {
+              //duplicate entry without exit -> reset to the latest entry
+              entryTs = e.timestamp;
+            }
           } else {
-            dwellRaw[h] = 0;
+            if (inside && entryTs != null && e.timestamp > entryTs) {
+              sessions.push({
+                entry: entryTs,
+                exit: e.timestamp,
+                durationSec: e.timestamp - entryTs,
+              });
+              inside = false;
+              entryTs = null;
+            } else {
+              //exit without prior entry -> ignore
+            }
           }
         }
-        return dwellRaw;
+        return sessions;
       }
 
-      function shrinkDwellToDailyMean(dwellRaw, entriesByHour, dailyMeanMin, K) {
-        //bayesian-like shrinkage using entries as "sample size"
-        const dwellSmooth = Array(24).fill(0);
-        for (let h = 0; h < 24; h++) {
-          const n = entriesByHour[h];
-          const raw = dwellRaw[h];
-          const denom = n + K;
-          dwellSmooth[h] =
-            denom > 0 ? (n * raw + K * dailyMeanMin) / denom : dailyMeanMin;
+      function sessionsInDay(sessions, dayStart, dayEnd) {
+        //keep sessions whose entry AND exit both fall within the day
+        return sessions.filter(
+          (s) => s.entry >= dayStart && s.exit <= dayEnd && s.durationSec > 0
+        );
+      }
+
+      function dwellByHourOfEntry(sessions) {
+        //return {count[24], sumMin[24], meanRaw[24]}
+        const count = Array(24).fill(0);
+        const sumMin = Array(24).fill(0);
+        for (const s of sessions) {
+          const h = toLocalHour(s.entry);
+          count[h]++;
+          sumMin[h] += s.durationSec / 60;
         }
-        return dwellSmooth;
+        const meanRaw = sumMin.map((sum, h) =>
+          count[h] > 0 ? sum / count[h] : 0
+        );
+        return { count, sumMin, meanRaw };
+      }
+
+      function bayesianShrinkage(means, counts, globalMean, K) {
+        //shrunk = (sum + K*global) / (n + K)
+        const shrunk = means.map((m, h) => {
+          const n = counts[h];
+          return (m * n + K * globalMean) / (n + K || 1); //if n=0,K=0 -> avoid /0
+        });
+        return shrunk;
       }
 
       let hourChart = null;
       let dwellChart = null;
 
-      function renderHourChart(entriesArr, exitsArr) {
+      function renderHourChart(data) {
         const ctx = $("hourChart").getContext("2d");
         const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
         const dsEntries = {
           label: "Entries",
-          data: entriesArr,
+          data: data.entries,
           backgroundColor: "rgba(52, 211, 153, 0.7)",
           borderColor: "rgba(52, 211, 153, 1)",
           borderWidth: 1,
         };
         const dsExits = {
           label: "Exits",
-          data: exitsArr,
+          data: data.exits,
           backgroundColor: "rgba(248, 113, 113, 0.7)",
           borderColor: "rgba(248, 113, 113, 1)",
           borderWidth: 1,
@@ -526,24 +490,30 @@
 
         if (hourChart) {
           hourChart.data.labels = labels;
-          hourChart.data.datasets[0].data = entriesArr;
-          hourChart.data.datasets[1].data = exitsArr;
+          hourChart.data.datasets[0].data = dsEntries.data;
+          hourChart.data.datasets[1].data = dsExits.data;
           hourChart.update();
           return;
         }
 
         hourChart = new Chart(ctx, {
           type: "bar",
-          data: { labels, datasets: [dsEntries, dsExits] },
+          data: {
+            labels,
+            datasets: [dsEntries, dsExits],
+          },
           options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: "index", intersect: false },
             plugins: {
-              legend: { labels: { color: "#e5e7eb" } },
+              legend: {
+                labels: { color: "#e5e7eb" },
+              },
               tooltip: {
                 callbacks: {
-                  label: (c) => `${c.dataset.label}: ${fmt.format(c.parsed.y)}`,
+                  label: (ctx) =>
+                    `${ctx.dataset.label}: ${fmt.format(ctx.parsed.y)}`,
                 },
               },
             },
@@ -562,13 +532,13 @@
         });
       }
 
-      function renderDwellChart(dwellRaw, dwellSmooth) {
+      function renderDwellChart(rawMeans, shrunkMeans) {
         const ctx = $("dwellChart").getContext("2d");
         const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
 
         const rawDs = {
-          label: "Raw",
-          data: dwellRaw,
+          label: "Raw Average",
+          data: rawMeans,
           borderColor: "rgba(191, 219, 254, 0.8)",
           backgroundColor: "rgba(191, 219, 254, 0.15)",
           borderWidth: 2,
@@ -577,9 +547,9 @@
           pointRadius: 2,
         };
 
-        const smDs = {
-          label: "Smoothed (K)",
-          data: dwellSmooth,
+        const shrunkDs = {
+          label: "Smoothed (Bayesian)",
+          data: shrunkMeans,
           borderColor: "rgba(96, 165, 250, 1)",
           backgroundColor: "rgba(96, 165, 250, 0.15)",
           borderWidth: 3,
@@ -590,15 +560,18 @@
 
         if (dwellChart) {
           dwellChart.data.labels = labels;
-          dwellChart.data.datasets[0].data = dwellRaw;
-          dwellChart.data.datasets[1].data = dwellSmooth;
+          dwellChart.data.datasets[0].data = rawDs.data;
+          dwellChart.data.datasets[1].data = shrunkDs.data;
           dwellChart.update();
           return;
         }
 
         dwellChart = new Chart(ctx, {
           type: "line",
-          data: { labels, datasets: [rawDs, smDs] },
+          data: {
+            labels,
+            datasets: [rawDs, shrunkDs],
+          },
           options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -607,8 +580,8 @@
               legend: { labels: { color: "#e5e7eb" } },
               tooltip: {
                 callbacks: {
-                  label: (c) =>
-                    `${c.dataset.label}: ${c.parsed.y.toFixed(2)} min`,
+                  label: (ctx) =>
+                    `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} min`,
                 },
               },
             },
@@ -620,13 +593,26 @@
               y: {
                 beginAtZero: true,
                 grid: { color: "rgba(255,255,255,0.06)" },
-                ticks: { color: "#cbd5e1", callback: (v) => `${v}m` },
+                ticks: {
+                  color: "#cbd5e1",
+                  callback: (v) => `${v}m`,
+                },
               },
             },
           },
         });
       }
 
+      function setError(msg) {
+        const box = $("errorBox");
+        if (!msg) {
+          box.style.display = "none";
+          box.textContent = "";
+          return;
+        }
+        box.style.display = "block";
+        box.textContent = msg;
+      }
 
       function setTZInfo() {
         const tz =
@@ -651,131 +637,110 @@
         setSelectedDateStr(s);
       }
 
-      function setStats({ fetchedCount, inCount, outCount, avgOcc, dailyDwell }) {
+      function updateSmoothLabel() {
+        $("smoothKVal").textContent = $("smoothK").value;
+      }
+
+      function setStats({
+        fetchedCount,
+        inCount,
+        outCount,
+        sessionsCount,
+        avgMin,
+        medMin,
+      }) {
         $("statEvents").textContent = fmt.format(fetchedCount);
         $("statInOut").textContent = `${fmt.format(inCount)} / ${fmt.format(
           outCount
         )}`;
-        $("statOcc").textContent = avgOcc.toFixed(2);
-        $("statDwell").textContent = formatMinutes(dailyDwell);
+        $("statSessions").textContent = fmt.format(sessionsCount);
+        $("statDwell").textContent = `${formatMinutes(
+          avgMin
+        )} avg • ${formatMinutes(medMin)} median`;
       }
-
-      let useNowOverride = false;
 
       async function refresh() {
         try {
           setError("");
-          setWarn("");
-
           const apiKey = $("apiKey").value.trim();
-          const count = parseInt($("countInput").value, 10) || 10000;
+          const count = parseInt($("countInput").value, 10) || 5000;
           const dateStr = getSelectedDateStr();
           if (!apiKey) throw new Error("Please enter an API key.");
           if (!dateStr) throw new Error("Please select a date.");
 
+          const dayEnd = endOfDayEpoch(dateStr);
           const dayStart = startOfDayEpoch(dateStr);
-          const dayEndDefault = endOfDayEpoch(dateStr);
-          const nowEpoch = Math.floor(Date.now() / 1000);
-          const dayEnd = useNowOverride
-            ? Math.min(nowEpoch, dayEndDefault)
-            : dayEndDefault;
 
           const events = await fetchMovements({
             apiKey,
             dateEpoch: dayEnd,
             count,
           });
+
           $("eventsMeta").textContent = `Fetched ${
             events.length
           } events up to ${new Date(dayEnd * 1000).toLocaleString()}.`;
 
-          if (!events.length) {
-            renderHourChart(Array(24).fill(0), Array(24).fill(0));
-            renderDwellChart(Array(24).fill(0), Array(24).fill(0));
-            setStats({
-              fetchedCount: 0,
-              inCount: 0,
-              outCount: 0,
-              avgOcc: 0,
-              dailyDwell: 0,
-            });
-            return;
-          }
-
-          //Sort ASC for time processing
+          //sort ascending for pairing logic
           const eventsAsc = [...events].sort(
             (a, b) => a.timestamp - b.timestamp
           );
 
-          //Baseline occupancy at start-of-day from earlier events we fetched
-          const { occ0, baselineKnown } = computeOccAtStartOfDay(
-            eventsAsc,
-            dayStart
-          );
-     
+          //chart 1: Entries/Exits by hour within the day
+          const grouped = groupEventsByHour(eventsAsc, dayStart, dayEnd);
+          renderHourChart(grouped);
 
-          //per-hour counts within the day
-          const grouped = computeEntriesExitsByHour(eventsAsc, dayStart, dayEnd);
+          //pair sessions, then filter to sessions fully within the day
+          const allSessions = buildSessions(eventsAsc);
+          const daySessions = sessionsInDay(allSessions, dayStart, dayEnd);
+          const durationsMin = daySessions.map((s) => s.durationSec / 60);
 
-          //integrate occupancy over the day (person-seconds) and per hour
-          const { hourAreaSec, totalAreaSec, avgOcc } = integrateOccupancyByHour(
-            eventsAsc,
-            dayStart,
-            dayEnd,
-            occ0
-          );
+          const { count: counts, sumMin, meanRaw } =
+            dwellByHourOfEntry(daySessions);
 
-          //Estimated dwell by hour via Little's Law
-          const dwellRaw = computeDwellFromOccupancy(
-            hourAreaSec,
-            grouped.entries
-          );
-
-          //Daily (global) dwell estimate
-          const totalEntriesInDay = grouped.entries.reduce((a, b) => a + b, 0);
-          const dailyDwellMin =
-            totalEntriesInDay > 0
-              ? totalAreaSec / (totalEntriesInDay * 60)
-              : 0;
-
-          //Smooth per-hour dwell toward daily mean
+          //global mean for Bayesian shrinkage
+          const totalSum = sumMin.reduce((a, b) => a + b, 0);
+          const totalN = counts.reduce((a, b) => a + b, 0);
+          const globalMean = totalN > 0 ? totalSum / totalN : 0;
           const K = parseInt($("smoothK").value, 10) || 0;
-          const dwellSmooth = shrinkDwellToDailyMean(
-            dwellRaw,
-            grouped.entries,
-            dailyDwellMin,
-            K
-          );
+          const meanShrunk = bayesianShrinkage(meanRaw, counts, globalMean, K);
 
-          //Render charts
-          renderHourChart(grouped.entries, grouped.exits);
-          renderDwellChart(dwellRaw, dwellSmooth);
+          renderDwellChart(meanRaw, meanShrunk);
 
-          //Summary stats
+          //Stats
+          const avgMin =
+            durationsMin.length > 0
+              ? durationsMin.reduce((a, b) => a + b, 0) /
+                durationsMin.length
+              : 0;
+          const medMin = percentile(durationsMin, 50);
+
           setStats({
             fetchedCount: events.length,
             inCount: grouped.inCount,
             outCount: grouped.outCount,
-            avgOcc,
-            dailyDwell: dailyDwellMin,
+            sessionsCount: daySessions.length,
+            avgMin,
+            medMin,
           });
         } catch (err) {
           console.error(err);
           setError(err?.message || "Unexpected error while loading data.");
-        } finally {
-          //reset one-shot override
-          useNowOverride = false;
         }
       }
 
       function initDefaults() {
+        //set default date to today
         const d = new Date();
         const todayStr = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
           d.getDate()
         )}`;
         setSelectedDateStr(todayStr);
+
+        //Load API key from localStorage
         const savedKey = localStorage.getItem("apiKey");
         if (savedKey) $("apiKey").value = savedKey;
+
         setTZInfo();
         updateSmoothLabel();
       }
@@ -792,6 +757,7 @@
           setError("");
           const k = $("apiKey").value.trim();
           if (!k) throw new Error("Please enter an API key.");
+          // Minimal test: try to fetch 1 event up to now
           const nowEpoch = Math.floor(Date.now() / 1000);
           await fetchMovements({ apiKey: k, dateEpoch: nowEpoch, count: 1 });
           setError("API key looks valid.");
@@ -818,18 +784,19 @@
         refresh();
       });
       $("nowBtn").addEventListener("click", () => {
-        useNowOverride = true;
+        //Use "now" by setting date to today, but in practice we always query up to end-of-day
+        //The end-of-day snapshot aligns to the selected date automatically.
         refresh();
       });
-
       $("smoothK").addEventListener("input", () => {
         updateSmoothLabel();
-        //Recompute smoothing without re-fetching: just re-run refresh (fast enough)
-        refresh();
+        //re-render with new smoothing without refetch
+        $("refreshBtn").click();
       });
 
       $("countInput").addEventListener("change", () => {
-        refresh();
+        //re-fetch with new count
+        $("refreshBtn").click();
       });
 
       document.addEventListener("keydown", (e) => {
@@ -837,6 +804,7 @@
       });
 
       initDefaults();
+      //auto-load on first open
       setTimeout(refresh, 50);
     </script>
   </body>
