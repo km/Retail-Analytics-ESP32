@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Retail Dashboard (Occupancy-based)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --muted: #9ca3af;
+        --text: #e5e7eb;
+        --primary: #60a5fa;
+        --cyan: #22d3ee;
+        --green: #34d399;
+        --red: #f87171;
+        --yellow: #fbbf24;
+        --border: #1f2937;
+        --shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        --radius: 12px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1200px 800px at 20% -10%, #172554, #0b1220)
+            no-repeat,
+          var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 20px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--primary), var(--cyan));
+        box-shadow: 0 0 12px rgba(34, 211, 238, 0.6);
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+        letter-spacing: 0.4px;
+      }
+      .container {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      .controls {
+        background: rgba(17, 24, 39, 0.8);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+        box-shadow: var(--shadow);
+        display: grid;
+        grid-template-columns: 1.3fr 1fr 0.8fr 0.9fr 1fr;
+        gap: 12px;
+        align-items: end;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      input[type="text"],
+      input[type="date"],
+      input[type="number"],
+      input[type="range"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #0b1020;
+        border: 1px solid var(--border);
+        color: var(--text);
+        outline: none;
+      }
+      .btn {
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0b1020;
+        color: var(--text);
+        cursor: pointer;
+        transition: 0.15s ease;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, var(--primary), var(--cyan));
+        color: #0b1020;
+        border: none;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.05);
+      }
+      .toolbar {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .error {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #fecaca;
+        display: none;
+      }
+      .warn {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(251, 191, 36, 0.1);
+        border: 1px solid rgba(251, 191, 36, 0.3);
+        color: #fde68a;
+        display: none;
+      }
+      .grid {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 16px;
+      }
+      .panel {
+        background: rgba(17, 24, 39, 0.8);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+        box-shadow: var(--shadow);
+      }
+      .panel h2 {
+        margin: 0 0 10px 0;
+        font-size: 16px;
+      }
+      canvas {
+        width: 100% !important;
+        height: 360px !important;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+      .stat {
+        background: #0b1020;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .stat .label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .stat .value {
+        margin-top: 6px;
+        font-size: 18px;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      @media (max-width: 1000px) {
+        .controls {
+          grid-template-columns: 1fr 1fr;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        canvas {
+          height: 300px !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <div class="dot"></div>
+        <h1>Retail Analytics Dashboard</h1>
+      </div>
+      <div class="muted" id="tzInfo"></div>
+    </header>
+
+    <div class="container">
+      <div class="controls">
+        <div class="field">
+          <label>API Key</label>
+          <input type="text" id="apiKey" placeholder="Paste API Key" />
+          <div class="toolbar">
+            <button class="btn" id="saveKeyBtn">Save Key</button>
+            <button class="btn" id="testKeyBtn">Test Key</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="datePicker" />
+          <div class="toolbar">
+            <button class="btn" id="prevDayBtn">Prev Day</button>
+            <button class="btn" id="nextDayBtn">Next Day</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Fetch Count (events)</label>
+          <input
+            type="number"
+            id="countInput"
+            min="100"
+            max="200000"
+            step="100"
+            value="10000"
+          />
+
+        </div>
+
+        <div class="field">
+          <label>Smoothing K (shrink toward daily mean)</label>
+          <input type="range" id="smoothK" min="0" max="20" step="1" value="5" />
+          <div class="toolbar">
+            <span class="muted">K=<span id="smoothKVal">5</span></span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn primary" id="refreshBtn">Refresh</button>
+          <div class="toolbar">
+            <button class="btn" id="todayBtn">Today</button>
+            <button class="btn" id="nowBtn">Use Now(instead of end-of-day)</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="errorBox" class="error"></div>
+      <div id="warnBox" class="warn"></div>
+
+      <div class="grid">
+        <div class="panel">
+          <h2>Entries / Exits by Hour (Selected Day)</h2>
+          <canvas id="hourChart"></canvas>
+          <div class="muted" id="eventsMeta"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Estimated Avg Dwell by Hour of Day (minutes)</h2>
+          <canvas id="dwellChart"></canvas>
+          <div class="muted">
+            Dwell = (average occupancy * 60) / entries. Smoothed toward daily
+            mean when samples per hour are low.
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 16px">
+        <h2>Summary</h2>
+        <div class="stats">
+          <div class="stat">
+            <div class="label">Total Events (fetched)</div>
+            <div class="value" id="statEvents">—</div>
+          </div>
+          <div class="stat">
+            <div class="label">Entries / Exits (in day)</div>
+            <div class="value" id="statInOut">—</div>
+          </div>
+          <div class="stat">
+            <div class="label">Avg Occupancy (in day)</div>
+            <div class="value" id="statOcc">—</div>
+          </div>
+          <div class="stat">
+            <div class="label">Daily Avg Dwell (minutes, estimated)</div>
+            <div class="value" id="statDwell">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      //utils
+      const $ = (id) => document.getElementById(id);
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const fmt = new Intl.NumberFormat();
+
+      function toLocalHour(ts) {
+        return new Date(ts * 1000).getHours();
+      }
+
+      function startOfDayEpoch(dateStr) {
+        const [y, m, d] = dateStr.split("-").map((x) => parseInt(x, 10));
+        return Math.floor(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000);
+      }
+
+      function endOfDayEpoch(dateStr) {
+        const [y, m, d] = dateStr.split("-").map((x) => parseInt(x, 10));
+        return Math.floor(new Date(y, m - 1, d, 23, 59, 59, 999).getTime() / 1000);
+      }
+
+      function nextHourBoundary(ts) {
+        const d = new Date(ts * 1000);
+        const next = new Date(
+          d.getFullYear(),
+          d.getMonth(),
+          d.getDate(),
+          d.getHours() + 1,
+          0,
+          0,
+          0
+        );
+        return Math.floor(next.getTime() / 1000);
+      }
+
+      function formatMinutes(mins) {
+        if (!isFinite(mins) || mins <= 0) return "—";
+        if (mins < 1) return `${Math.round(mins * 60)} sec`;
+        if (mins < 60) return `${mins.toFixed(1)} min`;
+        const h = Math.floor(mins / 60);
+        const m = Math.round(mins % 60);
+        return `${h}h ${pad2(m)}m`;
+      }
+
+      function setError(msg) {
+        const box = $("errorBox");
+        if (!msg) {
+          box.style.display = "none";
+          box.textContent = "";
+          return;
+        }
+        box.style.display = "block";
+        box.textContent = msg;
+      }
+
+      function setWarn(msg) {
+        const box = $("warnBox");
+        if (!msg) {
+          box.style.display = "none";
+          box.textContent = "";
+          return;
+        }
+        box.style.display = "block";
+        box.textContent = msg;
+      }
+
+      function updateSmoothLabel() {
+        $("smoothKVal").textContent = $("smoothK").value;
+      }
+
+      //api fetch
+      async function fetchMovements({ apiKey, dateEpoch, count }) {
+        const url = `/getMovements/?date=${encodeURIComponent(
+          dateEpoch
+        )}&count=${encodeURIComponent(count)}&api_key=${encodeURIComponent(
+          apiKey
+        )}`;
+        const res = await fetch(url, { method: "GET" });
+        if (!res.ok) {
+          let detail = "";
+          try {
+            const j = await res.json();
+            detail = j?.detail || JSON.stringify(j);
+          } catch {
+            detail = await res.text();
+          }
+          const msg =
+            res.status === 401
+              ? "Invalid API key"
+              : `HTTP ${res.status} ${res.statusText}`;
+          throw new Error(`${msg}${detail ? " – " + detail : ""}`);
+        }
+        const data = await res.json();
+        if (!data || !Array.isArray(data.movements)) {
+          throw new Error("Malformed response: missing movements[]");
+        }
+        return data.movements.map((m) => ({
+          timestamp: Number(m.timestamp),
+          is_entry: !!m.is_entry,
+        }));
+      }
+
+      
+      function computeEntriesExitsByHour(eventsAsc, dayStart, dayEnd) {
+        const entries = Array(24).fill(0);
+        const exits = Array(24).fill(0);
+        let inCount = 0,
+          outCount = 0;
+        for (const e of eventsAsc) {
+          if (e.timestamp >= dayStart && e.timestamp <= dayEnd) {
+            const h = toLocalHour(e.timestamp);
+            if (e.is_entry) {
+              entries[h]++;
+              inCount++;
+            } else {
+              exits[h]++;
+              outCount++;
+            }
+          }
+        }
+        return { entries, exits, inCount, outCount };
+      }
+
+      function computeOccAtStartOfDay(eventsAsc, dayStart) {
+        //sum entries exits for events strictly before dayStart
+        let occ = 0;
+        let earliestTs = Number.POSITIVE_INFINITY;
+        for (const e of eventsAsc) {
+          if (e.timestamp < earliestTs) earliestTs = e.timestamp;
+          if (e.timestamp < dayStart) {
+            occ += e.is_entry ? 1 : -1;
+          } else {
+            break; //because eventsAsc is sorted
+          }
+        }
+        const baselineKnown = earliestTs < dayStart;
+        return { occ0: occ, baselineKnown };
+      }
+
+      function integrateOccupancyByHour(eventsAsc, dayStart, dayEnd, occ0) {
+        //stepwise constant occupancy integration, split across hour buckets.
+        const hourAreaSec = Array(24).fill(0); // person-seconds per hour
+        let occ = occ0;
+        let t = dayStart;
+
+        //helper: add [t, t2) area with current occ, distributed by hour
+        function addSegment(t1, t2, occVal) {
+          if (t2 <= t1) return;
+          let cur = t1;
+          while (cur < t2) {
+            const h = toLocalHour(cur);
+            const boundary = Math.min(nextHourBoundary(cur), t2);
+            const dt = Math.max(0, boundary - cur);
+            const occClamped = Math.max(0, occVal); //avoid negative occupancy
+            hourAreaSec[h] += occClamped * dt;
+            cur = boundary;
+          }
+        }
+
+        for (const e of eventsAsc) {
+          if (e.timestamp < dayStart) continue;
+          if (e.timestamp > dayEnd) break;
+
+          addSegment(t, e.timestamp, occ);
+          //apply step at event time
+          occ += e.is_entry ? 1 : -1;
+          t = e.timestamp;
+        }
+        //tail to end-of-day
+        addSegment(t, dayEnd, occ);
+
+        const totalAreaSec = hourAreaSec.reduce((a, b) => a + b, 0);
+        const avgOcc = totalAreaSec / (dayEnd - dayStart || 1);
+
+        return { hourAreaSec, totalAreaSec, avgOcc };
+      }
+
+      function computeDwellFromOccupancy(hourAreaSec, entriesByHour) {
+        //dwell_h (minutes) ≈ (avg occupancy in hour × 60) / entries in hour
+        const dwellRaw = Array(24).fill(0);
+        for (let h = 0; h < 24; h++) {
+          const avgOccH = hourAreaSec[h] / 3600; // person-seconds -> persons
+          const ent = entriesByHour[h];
+          if (ent > 0 && avgOccH > 0) {
+            dwellRaw[h] = (avgOccH * 60) / ent;
+          } else {
+            dwellRaw[h] = 0;
+          }
+        }
+        return dwellRaw;
+      }
+
+      function shrinkDwellToDailyMean(dwellRaw, entriesByHour, dailyMeanMin, K) {
+        //bayesian-like shrinkage using entries as "sample size"
+        const dwellSmooth = Array(24).fill(0);
+        for (let h = 0; h < 24; h++) {
+          const n = entriesByHour[h];
+          const raw = dwellRaw[h];
+          const denom = n + K;
+          dwellSmooth[h] =
+            denom > 0 ? (n * raw + K * dailyMeanMin) / denom : dailyMeanMin;
+        }
+        return dwellSmooth;
+      }
+
+      let hourChart = null;
+      let dwellChart = null;
+
+      function renderHourChart(entriesArr, exitsArr) {
+        const ctx = $("hourChart").getContext("2d");
+        const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+        const dsEntries = {
+          label: "Entries",
+          data: entriesArr,
+          backgroundColor: "rgba(52, 211, 153, 0.7)",
+          borderColor: "rgba(52, 211, 153, 1)",
+          borderWidth: 1,
+        };
+        const dsExits = {
+          label: "Exits",
+          data: exitsArr,
+          backgroundColor: "rgba(248, 113, 113, 0.7)",
+          borderColor: "rgba(248, 113, 113, 1)",
+          borderWidth: 1,
+        };
+
+        if (hourChart) {
+          hourChart.data.labels = labels;
+          hourChart.data.datasets[0].data = entriesArr;
+          hourChart.data.datasets[1].data = exitsArr;
+          hourChart.update();
+          return;
+        }
+
+        hourChart = new Chart(ctx, {
+          type: "bar",
+          data: { labels, datasets: [dsEntries, dsExits] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: { labels: { color: "#e5e7eb" } },
+              tooltip: {
+                callbacks: {
+                  label: (c) => `${c.dataset.label}: ${fmt.format(c.parsed.y)}`,
+                },
+              },
+            },
+            scales: {
+              x: {
+                grid: { color: "rgba(255,255,255,0.06)" },
+                ticks: { color: "#cbd5e1" },
+              },
+              y: {
+                beginAtZero: true,
+                grid: { color: "rgba(255,255,255,0.06)" },
+                ticks: { color: "#cbd5e1" },
+              },
+            },
+          },
+        });
+      }
+
+      function renderDwellChart(dwellRaw, dwellSmooth) {
+        const ctx = $("dwellChart").getContext("2d");
+        const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+
+        const rawDs = {
+          label: "Raw",
+          data: dwellRaw,
+          borderColor: "rgba(191, 219, 254, 0.8)",
+          backgroundColor: "rgba(191, 219, 254, 0.15)",
+          borderWidth: 2,
+          fill: false,
+          tension: 0.25,
+          pointRadius: 2,
+        };
+
+        const smDs = {
+          label: "Smoothed (K)",
+          data: dwellSmooth,
+          borderColor: "rgba(96, 165, 250, 1)",
+          backgroundColor: "rgba(96, 165, 250, 0.15)",
+          borderWidth: 3,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+        };
+
+        if (dwellChart) {
+          dwellChart.data.labels = labels;
+          dwellChart.data.datasets[0].data = dwellRaw;
+          dwellChart.data.datasets[1].data = dwellSmooth;
+          dwellChart.update();
+          return;
+        }
+
+        dwellChart = new Chart(ctx, {
+          type: "line",
+          data: { labels, datasets: [rawDs, smDs] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: { labels: { color: "#e5e7eb" } },
+              tooltip: {
+                callbacks: {
+                  label: (c) =>
+                    `${c.dataset.label}: ${c.parsed.y.toFixed(2)} min`,
+                },
+              },
+            },
+            scales: {
+              x: {
+                grid: { color: "rgba(255,255,255,0.06)" },
+                ticks: { color: "#cbd5e1" },
+              },
+              y: {
+                beginAtZero: true,
+                grid: { color: "rgba(255,255,255,0.06)" },
+                ticks: { color: "#cbd5e1", callback: (v) => `${v}m` },
+              },
+            },
+          },
+        });
+      }
+
+
+      function setTZInfo() {
+        const tz =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time";
+        $("tzInfo").textContent = `Time zone: ${tz}`;
+      }
+
+      function getSelectedDateStr() {
+        return $("datePicker").value;
+      }
+
+      function setSelectedDateStr(dateStr) {
+        $("datePicker").value = dateStr;
+      }
+
+      function shiftSelectedDate(days) {
+        const d = new Date(getSelectedDateStr());
+        d.setDate(d.getDate() + days);
+        const s = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
+          d.getDate()
+        )}`;
+        setSelectedDateStr(s);
+      }
+
+      function setStats({ fetchedCount, inCount, outCount, avgOcc, dailyDwell }) {
+        $("statEvents").textContent = fmt.format(fetchedCount);
+        $("statInOut").textContent = `${fmt.format(inCount)} / ${fmt.format(
+          outCount
+        )}`;
+        $("statOcc").textContent = avgOcc.toFixed(2);
+        $("statDwell").textContent = formatMinutes(dailyDwell);
+      }
+
+      let useNowOverride = false;
+
+      async function refresh() {
+        try {
+          setError("");
+          setWarn("");
+
+          const apiKey = $("apiKey").value.trim();
+          const count = parseInt($("countInput").value, 10) || 10000;
+          const dateStr = getSelectedDateStr();
+          if (!apiKey) throw new Error("Please enter an API key.");
+          if (!dateStr) throw new Error("Please select a date.");
+
+          const dayStart = startOfDayEpoch(dateStr);
+          const dayEndDefault = endOfDayEpoch(dateStr);
+          const nowEpoch = Math.floor(Date.now() / 1000);
+          const dayEnd = useNowOverride
+            ? Math.min(nowEpoch, dayEndDefault)
+            : dayEndDefault;
+
+          const events = await fetchMovements({
+            apiKey,
+            dateEpoch: dayEnd,
+            count,
+          });
+          $("eventsMeta").textContent = `Fetched ${
+            events.length
+          } events up to ${new Date(dayEnd * 1000).toLocaleString()}.`;
+
+          if (!events.length) {
+            renderHourChart(Array(24).fill(0), Array(24).fill(0));
+            renderDwellChart(Array(24).fill(0), Array(24).fill(0));
+            setStats({
+              fetchedCount: 0,
+              inCount: 0,
+              outCount: 0,
+              avgOcc: 0,
+              dailyDwell: 0,
+            });
+            return;
+          }
+
+          //Sort ASC for time processing
+          const eventsAsc = [...events].sort(
+            (a, b) => a.timestamp - b.timestamp
+          );
+
+          //Baseline occupancy at start-of-day from earlier events we fetched
+          const { occ0, baselineKnown } = computeOccAtStartOfDay(
+            eventsAsc,
+            dayStart
+          );
+     
+
+          //per-hour counts within the day
+          const grouped = computeEntriesExitsByHour(eventsAsc, dayStart, dayEnd);
+
+          //integrate occupancy over the day (person-seconds) and per hour
+          const { hourAreaSec, totalAreaSec, avgOcc } = integrateOccupancyByHour(
+            eventsAsc,
+            dayStart,
+            dayEnd,
+            occ0
+          );
+
+          //Estimated dwell by hour via Little's Law
+          const dwellRaw = computeDwellFromOccupancy(
+            hourAreaSec,
+            grouped.entries
+          );
+
+          //Daily (global) dwell estimate
+          const totalEntriesInDay = grouped.entries.reduce((a, b) => a + b, 0);
+          const dailyDwellMin =
+            totalEntriesInDay > 0
+              ? totalAreaSec / (totalEntriesInDay * 60)
+              : 0;
+
+          //Smooth per-hour dwell toward daily mean
+          const K = parseInt($("smoothK").value, 10) || 0;
+          const dwellSmooth = shrinkDwellToDailyMean(
+            dwellRaw,
+            grouped.entries,
+            dailyDwellMin,
+            K
+          );
+
+          //Render charts
+          renderHourChart(grouped.entries, grouped.exits);
+          renderDwellChart(dwellRaw, dwellSmooth);
+
+          //Summary stats
+          setStats({
+            fetchedCount: events.length,
+            inCount: grouped.inCount,
+            outCount: grouped.outCount,
+            avgOcc,
+            dailyDwell: dailyDwellMin,
+          });
+        } catch (err) {
+          console.error(err);
+          setError(err?.message || "Unexpected error while loading data.");
+        } finally {
+          //reset one-shot override
+          useNowOverride = false;
+        }
+      }
+
+      function initDefaults() {
+        const d = new Date();
+        const todayStr = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
+          d.getDate()
+        )}`;
+        setSelectedDateStr(todayStr);
+        const savedKey = localStorage.getItem("apiKey");
+        if (savedKey) $("apiKey").value = savedKey;
+        setTZInfo();
+        updateSmoothLabel();
+      }
+
+      $("saveKeyBtn").addEventListener("click", () => {
+        const k = $("apiKey").value.trim();
+        if (!k) return setError("API key is empty.");
+        localStorage.setItem("apiKey", k);
+        setError("");
+      });
+
+      $("testKeyBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          const k = $("apiKey").value.trim();
+          if (!k) throw new Error("Please enter an API key.");
+          const nowEpoch = Math.floor(Date.now() / 1000);
+          await fetchMovements({ apiKey: k, dateEpoch: nowEpoch, count: 1 });
+          setError("API key looks valid.");
+        } catch (e) {
+          setError(e.message);
+        }
+      });
+
+      $("refreshBtn").addEventListener("click", refresh);
+      $("prevDayBtn").addEventListener("click", () => {
+        shiftSelectedDate(-1);
+        refresh();
+      });
+      $("nextDayBtn").addEventListener("click", () => {
+        shiftSelectedDate(1);
+        refresh();
+      });
+      $("todayBtn").addEventListener("click", () => {
+        const d = new Date();
+        const s = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
+          d.getDate()
+        )}`;
+        setSelectedDateStr(s);
+        refresh();
+      });
+      $("nowBtn").addEventListener("click", () => {
+        useNowOverride = true;
+        refresh();
+      });
+
+      $("smoothK").addEventListener("input", () => {
+        updateSmoothLabel();
+        //Recompute smoothing without re-fetching: just re-run refresh (fast enough)
+        refresh();
+      });
+
+      $("countInput").addEventListener("change", () => {
+        refresh();
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") $("refreshBtn").click();
+      });
+
+      initDefaults();
+      setTimeout(refresh, 50);
+    </script>
+  </body>
+</html>
